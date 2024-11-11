@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import fields, dataclass, is_dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-import imageio
+import imageio.v3 as imageio
 import numpy as np
 
 
@@ -14,48 +16,52 @@ def load_from_json(filepath: Path) -> dict:
         return json.load(file)
 
 
+def dataclass_to_dict(obj: object):
+    if not is_dataclass(obj):
+        raise TypeError("Input must be a dataclass instance")
+
+    result = {}
+    for field in fields(obj):
+        value = getattr(obj, field.name)
+        if isinstance(value, np.ndarray):
+            result[field.name] = value.tolist()
+        elif is_dataclass(value):
+            result[field.name] = dataclass_to_dict(value)
+        elif isinstance(value, list):
+            result[field.name] = [
+                dataclass_to_dict(v) if is_dataclass(v) else v for v in value
+            ]
+        else:
+            result[field.name] = value
+    return result
+
+
 @dataclass
 class FrameParams:
     file_path: str
     transform_matrix: np.ndarray
-    colmap_im_id: Optional[int]
+    colmap_im_id: Optional[int] = None
 
 
 @dataclass
 class TransformsJsonParams:
-    w: int
-    h: int
-    fl_x: float
-    fl_y: float
-    cx: float
-    cy: float
-    frames: List[FrameParams]
+    w: Optional[int]
+    h: Optional[int]
+    fl_x: Optional[float]
+    fl_y: Optional[float]
+    cx: Optional[float]
+    cy: Optional[float]
     k1: Optional[float] = None
     k2: Optional[float] = None
     p1: Optional[float] = None
     p2: Optional[float] = None
     camera_model: Optional[str] = None
+    frames: Optional[list[FrameParams]] = None
     applied_transform: Optional[np.ndarray] = None
     ply_file_path: Optional[str] = None
 
-
-class TransformTransforms:
-    transforms_json_params: TransformsJsonParams
-
-    def __init__(self, input_dir: Path) -> None:
-        if not isinstance(input_dir, Path):
-            input_dir = Path(input_dir)
-
-        files = os.listdir(input_dir)
-        assert "images" in files
-        assert "transforms.json" in files
-
-        data = load_from_json(input_dir / "transforms.json")
-        self.transforms_json_params = self.create_transforms_json_params(data)
-
-        print(self.transforms_json_params)
-
-    def create_transforms_json_params(self, data: dict) -> ...:
+    @classmethod
+    def create(cls, data: dict) -> TransformsJsonParams:
         frames = [
             FrameParams(
                 file_path=frame_data["file_path"],
@@ -67,7 +73,7 @@ class TransformTransforms:
             for frame_data in data["frames"]
         ]
 
-        return TransformsJsonParams(
+        return cls(
             w=data["w"],
             h=data["h"],
             fl_x=data["fl_x"],
@@ -88,19 +94,70 @@ class TransformTransforms:
             ply_file_path=data["ply_file_path"] if "ply_file_path" in data else None,
         )
 
-    def associate_frames(self) -> ...:
-        pass
 
-    def resize(self) -> ...:
-        pass
+class TransformTransforms:
+    transforms_json_params: TransformsJsonParams
+    image_filenames: list[str]
+    _resize: Optional[tuple[int, int]] = None
+    _crop: Optional[tuple[int, int]] = None
 
-    def crop(self) -> ...:
-        pass
+    def __init__(self, input_dir: Path) -> None:
+        if not isinstance(input_dir, Path):
+            input_dir = Path(input_dir)
+        assert input_dir.exists(), f"{input_dir} does not exist"
+        self.input_dir = input_dir
+        self._initialize()
 
-    def dump(self) -> ...:
-        pass
+    def _initialize(self) -> None:
+        assert "transforms.json" in os.listdir(self.input_dir)
+        data = load_from_json(self.input_dir / "transforms.json")
+        self.transforms_json_params = TransformsJsonParams.create(data)
+
+        assert "images" in os.listdir(self.input_dir)
+        self.image_filenames = os.listdir(self.input_dir / "images")
+
+    def associate_frames(self) -> None:
+        associated_images = [
+            filename
+            for filename in self.image_filenames
+            if any(
+                filename == frame.file_path.split("/")[-1]
+                for frame in self.transforms_json_params.frames
+            )
+        ]
+        associated_frames = [
+            frame
+            for frame in self.transforms_json_params.frames
+            if frame.file_path.split("/")[-1] in associated_images
+        ]
+        self.transforms_json_params.frames = associated_frames
+        self.image_filenames = associated_images
+
+    def resize(self, size: tuple[int, int]) -> None:
+        self._resize = size
+
+    def crop(self, size: tuple[int, int]) -> None:
+        self._crop = size
+
+    def dump(self) -> None:
+        output_dir = Path(str(self.input_dir) + "_tr")
+        image_output_dir = output_dir / "images"
+        os.makedirs(image_output_dir, exist_ok=True)
+
+        for filename in self.image_filenames:
+            image = imageio.imread(self.input_dir / "images" / filename)
+            if self._resize is not None:
+                pass
+            if self._crop is not None:
+                pass
+            imageio.imwrite(image_output_dir / filename, image)
+
+        with open(output_dir / "transforms.json", mode="w", encoding="utf-8") as file:
+            json.dump(dataclass_to_dict(self.transforms_json_params), file, indent=4)
 
 
 # pytest
 if __name__ == "__main__":
-    tt = TransformTransforms("data/fox")
+    tt = TransformTransforms("data/fox3")
+    tt.associate_frames()
+    tt.dump()
