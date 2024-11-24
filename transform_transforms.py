@@ -23,6 +23,9 @@ def dataclass_to_dict(obj: object):
     result = {}
     for field in fields(obj):
         value = getattr(obj, field.name)
+        if value is None:
+            continue
+
         if isinstance(value, np.ndarray):
             result[field.name] = value.tolist()
         elif is_dataclass(value):
@@ -33,6 +36,7 @@ def dataclass_to_dict(obj: object):
             ]
         else:
             result[field.name] = value
+
     return result
 
 
@@ -45,12 +49,12 @@ class FrameParams:
 
 @dataclass
 class TransformsJsonParams:
-    w: Optional[int]
-    h: Optional[int]
-    fl_x: Optional[float]
-    fl_y: Optional[float]
-    cx: Optional[float]
-    cy: Optional[float]
+    w: Optional[int] = None
+    h: Optional[int] = None
+    fl_x: Optional[float] = None
+    fl_y: Optional[float] = None
+    cx: Optional[float] = None
+    cy: Optional[float] = None
     k1: Optional[float] = None
     k2: Optional[float] = None
     p1: Optional[float] = None
@@ -139,8 +143,8 @@ class TransformTransforms:
     def crop(self, size: tuple[int, int]) -> None:
         self._crop = size
 
-    def dump(self) -> None:
-        output_dir = Path(str(self.input_dir) + "_tr")
+    def dump(self, output_dir: str) -> None:
+        output_dir = Path(output_dir)
         image_output_dir = output_dir / "images"
         os.makedirs(image_output_dir, exist_ok=True)
 
@@ -158,6 +162,6 @@ class TransformTransforms:
 
 # pytest
 if __name__ == "__main__":
-    tt = TransformTransforms("data/fox3")
+    tt = TransformTransforms("data/equ")
     tt.associate_frames()
-    tt.dump()
+    tt.dump(output_dir="data/equ_new")
